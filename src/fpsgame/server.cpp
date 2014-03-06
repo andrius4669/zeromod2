@@ -2775,7 +2775,7 @@ namespace server
         sendservinfo(ci);
         return DISC_NONE;
     }
-    
+
     VAR(servershowdisconnects, 0, 1, 1);
 
     void clientdisconnect(int n, bool self, int reason)
