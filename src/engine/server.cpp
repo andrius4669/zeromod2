@@ -330,14 +330,8 @@ void disconnect_client(int n, int reason)
 {
     if(!clients.inrange(n) || clients[n]->type!=ST_TCPIP) return;
     enet_peer_disconnect(clients[n]->peer, reason);
-    server::clientdisconnect(n);
+    server::clientdisconnect(n, false, reason);
     delclient(clients[n]);
-    const char *msg = disconnectreason(reason);
-    string s;
-    if(msg) formatstring(s)("client (%s) disconnected because: %s", clients[n]->hostname, msg);
-    else formatstring(s)("client (%s) disconnected", clients[n]->hostname);
-    logoutf("%s", s);
-    server::sendservmsg(s);
 }
 
 void kicknonlocalclients(int reason)
@@ -371,12 +365,7 @@ int connectwithtimeout(ENetSocket sock, const char *hostname, const ENetAddress 
 }
 #endif
 
-//ENetSocket mastersock = ENET_SOCKET_NULL;
-ENetAddress /*masteraddress = { ENET_HOST_ANY, ENET_PORT_ANY },*/ serveraddress = { ENET_HOST_ANY, ENET_PORT_ANY };
-//int lastupdatemaster = 0, lastconnectmaster = 0, masterconnecting = 0, masterconnected = 0;
-//vector<char> masterout, masterin;
-//int masteroutpos = 0, masterinpos = 0;
-//VARN(updatemaster, allowupdatemaster, 0, 1, 1);
+ENetAddress serveraddress = { ENET_HOST_ANY, ENET_PORT_ANY };
 
 #define INCLUDED_IN_SERVER 1
 #include "zeromod/multimasterserver.h"
@@ -404,9 +393,6 @@ void disconnectmaster(int m)
     masterservers[m].masterconnecting = 0;
     masterservers[m].masterconnected = 0;
 }
-
-//SVARF(mastername, server::defaultmaster(), disconnectmaster());
-//VARF(masterport, 1, server::masterport(), 0xFFFF, disconnectmaster());
 
 ENetSocket connectmaster(int m, bool wait)
 {
@@ -696,9 +682,8 @@ void serverslice(bool dedicated, uint timeout)   // main server update, called f
                 client &c = addclient(ST_TCPIP);
                 c.peer = event.peer;
                 c.peer->data = &c;
-                char hn[1024];
+                string hn;
                 copystring(c.hostname, (enet_address_get_host_ip(&c.peer->address, hn, sizeof(hn))==0) ? hn : "unknown");
-                logoutf("connect: client connected (%s)", c.hostname);
                 int reason = server::clientconnect(c.num, c.peer->address.host);
                 if(reason) disconnect_client(c.num, reason);
                 break;
@@ -714,8 +699,7 @@ void serverslice(bool dedicated, uint timeout)   // main server update, called f
             {
                 client *c = (client *)event.peer->data;
                 if(!c) break;
-                logoutf("disconnect: disconnected client (%s)", c->hostname);
-                server::clientdisconnect(c->num);
+                server::clientdisconnect(c->num, true, DISC_NONE);
                 delclient(c);
                 break;
             }
@@ -735,7 +719,7 @@ void flushserver(bool force)
 void localdisconnect(bool cleanup)
 {
     bool disconnected = false;
-    loopv(clients) if(clients[i]->type==ST_LOCAL) 
+    loopv(clients) if(clients[i]->type==ST_LOCAL)
     {
         server::localdisconnect(i);
         delclient(clients[i]);
@@ -1124,7 +1108,7 @@ bool setuplistenserver(bool dedicated)
         if(enet_address_set_host(&address, serverip)<0) conoutf(CON_WARN, "WARNING: server ip not resolved");
         else serveraddress.host = address.host;
     }
-    serverhost = enet_host_create(&address, min(max(maxpeers, maxclients + server::reserveclients()), MAXCLIENTS), server::numchannels(), 0, serveruprate);
+    serverhost = enet_host_create(&address, min(max(maxclients + server::reserveclients(), maxpeers), MAXCLIENTS), server::numchannels(), 0, serveruprate);
     if(!serverhost) return servererror(dedicated, "could not create server host");
     serverhost->duplicatePeers = maxdupclients ? maxdupclients : MAXCLIENTS;
     loopi(serverhost->peerCount) serverhost->peers[i].data = NULL;

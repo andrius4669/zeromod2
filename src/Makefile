@@ -160,6 +160,8 @@ MASTER_OBJS= \
 	engine/command-standalone.o \
 	engine/master-standalone.o
 
+SERVER_MASTER_OBJS= $(SERVER_OBJS) $(filter-out $(SERVER_OBJS),$(MASTER_OBJS))
+
 ifneq (,$(findstring DARWIN,$(PLATFORM)))
 CLIENT_OBJS+= xcode/macutils.o xcode/main.o xcode/Launcher.o
 
@@ -175,7 +177,9 @@ default: all
 all: client server
 
 clean:
-	-$(RM) $(CLIENT_PCH) $(CLIENT_OBJS) $(SERVER_OBJS) $(MASTER_OBJS) sauer_client sauer_server sauer_master
+	-$(RM) $(CLIENT_PCH) $(CLIENT_OBJS) $(SERVER_MASTER_OBJS) sauer_client sauer_server sauer_master
+
+$(filter-out shared/%,$(CLIENT_PCH)): $(filter shared/%,$(CLIENT_PCH))
 
 %.h.gch: %.h
 	$(CXX) $(CXXFLAGS) -x c++-header -o $@.tmp $<
@@ -189,8 +193,7 @@ $(filter shared/%,$(CLIENT_OBJS)): $(filter shared/%,$(CLIENT_PCH))
 $(filter engine/%,$(CLIENT_OBJS)): $(filter engine/%,$(CLIENT_PCH))
 $(filter fpsgame/%,$(CLIENT_OBJS)): $(filter fpsgame/%,$(CLIENT_PCH))
 
-$(SERVER_OBJS): CXXFLAGS += $(SERVER_INCLUDES)
-$(filter-out $(SERVER_OBJS),$(MASTER_OBJS)): CXXFLAGS += $(SERVER_INCLUDES)
+$(SERVER_MASTER_OBJS): CXXFLAGS += $(SERVER_INCLUDES)
 
 ifneq (,$(findstring MINGW,$(PLATFORM)))
 client: $(CLIENT_OBJS)
@@ -235,13 +238,9 @@ enet/libenet.a:
 libenet: enet/libenet.a
 
 depend:
-	makedepend -Y -Ishared -Iengine -Ifpsgame $(subst .o,.cpp,$(CLIENT_OBJS))
-	makedepend -a -o.h.gch -Y -Ishared -Iengine -Ifpsgame $(subst .h.gch,.h,$(CLIENT_PCH))
-	makedepend -a -o-standalone.o -Y -DSTANDALONE -Ishared -Iengine -Ifpsgame $(subst -standalone.o,.cpp,$(SERVER_OBJS))
-	makedepend -a -o-standalone.o -Y -DSTANDALONE -Ishared -Iengine -Ifpsgame $(subst -standalone.o,.cpp,$(filter-out $(SERVER_OBJS), $(MASTER_OBJS)))
-
-engine/engine.h.gch: shared/cube.h.gch
-fpsgame/game.h.gch: shared/cube.h.gch
+	makedepend -Y -Ishared -Iengine -Ifpsgame $(CLIENT_OBJS:.o=.cpp)
+	makedepend -a -o.h.gch -Y -Ishared -Iengine -Ifpsgame $(CLIENT_PCH:.h.gch=.h)
+	makedepend -a -o-standalone.o -Y -DSTANDALONE -Ishared -Iengine -Ifpsgame $(SERVER_MASTER_OBJS:-standalone.o=.cpp)
 
 # DO NOT DELETE
 
@@ -401,7 +400,6 @@ engine/server.o: shared/ents.h shared/command.h shared/iengine.h
 engine/server.o: shared/igame.h engine/world.h engine/octa.h
 engine/server.o: engine/lightmap.h engine/bih.h engine/texture.h
 engine/server.o: engine/model.h engine/varray.h
-engine/server.o: fpsgame/zeromod/multimasterserver.h
 engine/serverbrowser.o: engine/engine.h shared/cube.h shared/tools.h
 engine/serverbrowser.o: shared/geom.h shared/ents.h shared/command.h
 engine/serverbrowser.o: shared/iengine.h shared/igame.h engine/world.h
@@ -469,7 +467,6 @@ fpsgame/server.o: fpsgame/game.h shared/cube.h shared/tools.h shared/geom.h
 fpsgame/server.o: shared/ents.h shared/command.h shared/iengine.h
 fpsgame/server.o: shared/igame.h fpsgame/ai.h fpsgame/capture.h fpsgame/ctf.h
 fpsgame/server.o: fpsgame/collect.h fpsgame/extinfo.h fpsgame/aiman.h
-fpsgame/server.o: fpsgame/zeromod/multimasterserver.h fpsgame/zeromod/bans.h fpsgame/zeromod/scommands.h fpsgame/zeromod/mute.h
 fpsgame/waypoint.o: fpsgame/game.h shared/cube.h shared/tools.h shared/geom.h
 fpsgame/waypoint.o: shared/ents.h shared/command.h shared/iengine.h
 fpsgame/waypoint.o: shared/igame.h fpsgame/ai.h
@@ -503,7 +500,6 @@ engine/command-standalone.o: shared/iengine.h shared/igame.h engine/world.h
 engine/server-standalone.o: engine/engine.h shared/cube.h shared/tools.h
 engine/server-standalone.o: shared/geom.h shared/ents.h shared/command.h
 engine/server-standalone.o: shared/iengine.h shared/igame.h engine/world.h
-engine/server-standalone.o: fpsgame/zeromod/multimasterserver.h
 engine/worldio-standalone.o: engine/engine.h shared/cube.h shared/tools.h
 engine/worldio-standalone.o: shared/geom.h shared/ents.h shared/command.h
 engine/worldio-standalone.o: shared/iengine.h shared/igame.h engine/world.h
@@ -516,7 +512,6 @@ fpsgame/server-standalone.o: shared/iengine.h shared/igame.h fpsgame/ai.h
 fpsgame/server-standalone.o: fpsgame/capture.h fpsgame/ctf.h
 fpsgame/server-standalone.o: fpsgame/collect.h fpsgame/extinfo.h
 fpsgame/server-standalone.o: fpsgame/aiman.h
-fpsgame/server-standalone.o: fpsgame/zeromod/multimasterserver.h fpsgame/zeromod/bans.h fpsgame/zeromod/scommands.h fpsgame/zeromod/mute.h
 
 engine/master-standalone.o: shared/cube.h shared/tools.h shared/geom.h
 engine/master-standalone.o: shared/ents.h shared/command.h shared/iengine.h

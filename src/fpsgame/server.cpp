@@ -243,8 +243,9 @@ namespace server
         int authmaster;
         bool spy, hidepriv;
         bool nexthidepriv;
+        char *disconnectmessage;
 
-        clientinfo() : getdemo(NULL), getmap(NULL), clipboard(NULL), authchallenge(NULL), authkickreason(NULL) { reset(); }
+        clientinfo() : getdemo(NULL), getmap(NULL), clipboard(NULL), authchallenge(NULL), authkickreason(NULL), disconnectmessage(NULL) { reset(); }
         ~clientinfo() { events.deletecontents(); cleanclipboard(); cleanauth(); }
 
         void addevent(gameevent *e)
@@ -629,7 +630,7 @@ namespace server
     SVAR(adminpass, "");
     SVAR(masterpass, "");
     VAR(allowadminconnect, 0, 1, 2);
-    VAR(allowauthconnect, 0, 1, 1);
+    VAR(allowauthconnect, 0, 1, 2);
     VAR(allowmasterconnect, 0, 0, 2);
     VARF(defaultmastermode, MM_AUTH, MM_OPEN, MM_PASSWORD, {
         bool hasmaster = false;
@@ -820,13 +821,13 @@ namespace server
     {
     }
 
-    int numclients(int exclude = -1, bool nospec = true, bool noai = true, bool priv = false)
+    int numclients(int exclude = -1, bool nospec = true, bool noai = true, bool priv = false, bool spy = false)
     {
         int n = 0;
         loopv(clients) 
         {
             clientinfo *ci = clients[i];
-            if(ci->clientnum!=exclude && !ci->spy && (!nospec || ci->state.state!=CS_SPECTATOR || (priv && (ci->privilege || ci->local))) && (!noai || ci->state.aitype == AI_NONE)) n++;
+            if(ci->clientnum!=exclude && (spy || !ci->spy) && (!nospec || ci->state.state!=CS_SPECTATOR || (priv && (ci->privilege || ci->local))) && (!noai || ci->state.aitype == AI_NONE)) n++;
         }
         return n;
     }
@@ -1576,18 +1577,18 @@ namespace server
             if(authdesc && authdesc[0])
             {
                 formatstring(msg)("%s claimed %s%s as '\fs\f5%s\fr' [\fs\f0%s\fr]", colorname(ci), (hidden || ci->spy) ? "hidden " : "", name, authname, authdesc);
-                if(isdedicatedserver()) logoutf("setmaster: %s claimed %s as '%s' [%s]", colorname(ci, ci->name, true), name, authname, authdesc);
+                if(isdedicatedserver()) logoutf("priv: %s claimed %s as '%s' [%s]", colorname(ci, ci->name, true), name, authname, authdesc);
             }
             else
             {
                 formatstring(msg)("%s claimed %s%s as '\fs\f5%s\fr'", colorname(ci), (hidden || ci->spy) ? "hidden " : "", name, authname);
-                if(isdedicatedserver()) logoutf("setmaster: %s claimed %s as '%s'", colorname(ci, ci->name, true), name, authname);
+                if(isdedicatedserver()) logoutf("priv: %s claimed %s as '%s'", colorname(ci, ci->name, true), name, authname);
             }
         } 
         else
         {
             formatstring(msg)("%s %s %s%s", colorname(ci), val ? "claimed" : "relinquished", (val ? (hidden || ci->spy) : washidden) ? "hidden " : "", name);
-            if(isdedicatedserver()) logoutf("setmaster: %s %s %s", colorname(ci, ci->name, true), val ? "claimed" : "relinquished", name);
+            if(isdedicatedserver()) logoutf("priv: %s %s %s", colorname(ci, ci->name, true), val ? "claimed" : "relinquished", name);
         }
         ci->hidepriv = val && hidden;
         char *msg0p = NULL;
@@ -1993,7 +1994,7 @@ namespace server
     bool hasmap(clientinfo *ci)
     {
         return (m_edit && (clients.length() > 0 || ci->local)) ||
-               (smapname[0] && (!m_timed || gamemillis < gamelimit || (ci->state.state==CS_SPECTATOR && !ci->privilege && !ci->local) || numclients(ci->clientnum, true, true, true)));
+               (smapname[0] && (!m_timed || gamemillis < gamelimit || (ci->state.state==CS_SPECTATOR && !ci->privilege && !ci->local) || numclients(ci->clientnum, true, true, true, true)));
     }
 
     int welcomepacket(packetbuf &p, clientinfo *ci)
@@ -2173,6 +2174,7 @@ namespace server
         if(smode) smode->cleanup();
         if(!persistbots) aiman::clearai();
 
+        int oldmode = gamemode;
         gamemode = mode;
         gamemillis = 0;
         gamelimit = (m_overtime ? 15 : 10)*60000;
@@ -2194,7 +2196,7 @@ namespace server
         sendf(-1, 1, "risii", N_MAPCHANGE, smapname, gamemode, 1);
 
         clearteaminfo();
-        if(m_teammode) switch(persistteams)
+        if(m_teammode) switch(m_check(oldmode, M_TEAM) ? persistteams : 0)
         {
             case 0: default: autoteam(); break;
             case 1:
@@ -2205,6 +2207,13 @@ namespace server
                 if(m_ctf) autoteam();
                 else persistautoteam();
                 break;
+        }
+        else loopv(clients)
+        {
+            clientinfo &ci = *clients[i];
+            if(!strcmp(ci.team, "good")) continue;
+            copystring(ci.team, "good", MAXTEAMLEN+1);
+            sendf(!ci.spy ? -1 : ci->ownernum, 1, "riisi", N_SETTEAM, ci.clientnum, ci.team, -1);
         }
 
         if(m_capture) smode = &capturemode;
@@ -2741,8 +2750,15 @@ namespace server
     void localdisconnect(int n)
     {
         if(m_demo) enddemoplayback();
-        clientdisconnect(n);
+        clientdisconnect(n, true, DISC_NONE);
     }
+
+    // hardbans :3
+    struct hbaninfo
+    {
+        int ip, mask;
+    };
+    vector<hbaninfo> hbans;
 
     int clientconnect(int n, uint ip)
     {
@@ -2751,16 +2767,23 @@ namespace server
         ci->connectmillis = totalmillis;
         ci->sessionid = (rnd(0x1000000)*((totalmillis%10000)+1))&0xFFFFFF;
 
+        logoutf("connect: client %d (%s) connected", n, getclienthostname(n));
+
         connects.add(ci);
         if(!m_mp(gamemode)) return DISC_LOCAL;
+        loopv(hbans) if((ip & hbans[i].mask) == hbans[i].ip) return DISC_IPBAN;
         sendservinfo(ci);
         return DISC_NONE;
     }
+    
+    VAR(servershowdisconnects, 0, 1, 1);
 
-    void clientdisconnect(int n)
+    void clientdisconnect(int n, bool self, int reason)
     {
         clientinfo *ci = getinfo(n);
         loopv(clients) if(clients[i]->authkickvictim == ci->clientnum) clients[i]->cleanauth(); 
+        string s;
+        const char *msg = disconnectreason(reason);
         if(ci->connected)
         {
             if(ci->privilege) setmaster(ci, false);
@@ -2768,17 +2791,46 @@ namespace server
             ci->state.timeplayed += lastmillis - ci->state.lasttimeplayed;
             savescore(ci);
             if(!ci->spy) sendf(-1, 1, "ri2", N_CDIS, n);
+            logoutf("clientinfo: %s left", colorname(ci, ci->name, true));
             clients.removeobj(ci);
             aiman::removeai(ci);
-            if(!numclients(-1, false, true)) noclients(); // bans clear when server empties
+            if(!numclients(-1, false, true, false, true)) noclients(); // bans clear when server empties
             if(ci->local) checkpausegame();
+
+            if(ci->disconnectmessage) sendservmsg(ci->disconnectmessage);
+            else if(!self && !ci->spy)
+            {
+                if(msg) formatstring(s)("client %s (%s) disconnected because: %s", colorname(ci), getclienthostname(n), msg);
+                else formatstring(s)("client %s (%s) disconnected", colorname(ci), getclienthostname(n));
+                sendservmsg(s);
+            }
         }
-        else connects.removeobj(ci);
+        else
+        {
+            connects.removeobj(ci);
+
+            if(servershowdisconnects && !self && !ci->spy)
+            {
+                if(msg) formatstring(s)("client (%s) disconnected because: %s", getclienthostname(n), msg);
+                else formatstring(s)("client (%s) disconnected", getclienthostname(n));
+                sendservmsg(s);
+            }
+        }
+
+        if(msg) formatstring(s)("connect: client %d (%s) disconnected%s because: %s", n, getclienthostname(n), self ? "" : " by server", msg);
+        else formatstring(s)("connect: client %d (%s) disconnected%s", n, getclienthostname(n), self ? "" : " by server");
+        logoutf("%s", s);
+        DELETEA(ci->disconnectmessage);
     }
 
-    void setspectator(clientinfo *spinfo, bool val, bool visible = true)
+    void setspectator(clientinfo *spinfo, bool val, bool visible = true, clientinfo *by = NULL)
     {
         if(!spinfo || !spinfo->connected || spinfo->state.aitype!=AI_NONE || (spinfo->state.state==CS_SPECTATOR ? val : !val)) return;
+        if(isdedicatedserver())
+        {
+            if(!by) logoutf("spectate: %s %sspectated", colorname(spinfo, spinfo->name, true), val ? "" : "un");
+            else logoutf("spectate: %s %sspectated by %s", colorname(spinfo, spinfo->name, true), val ? "" : "un", colorname(by, by->name, true));
+        }
         if(spinfo->state.state!=CS_SPECTATOR && val)
         {
             if(spinfo->state.state==CS_ALIVE) suicide(spinfo, visible);
@@ -3028,7 +3080,15 @@ namespace server
         clientinfo *ci = findauth(m, id);
         if(!ci) return;
         ci->cleanauth(ci->connectauth!=0);
-        if(ci->connectauth) connected(ci);
+        if(ci->connectauth)
+        {
+            if(priv >= PRIV_ADMIN || allowauthconnect == 1) connected(ci);
+            else
+            {
+                ci->cleanauth();
+                disconnect_client(ci->clientnum, ci->connectauth);
+            }
+        }
         if(ci->authkickvictim >= 0)
         {
             if(setmaster(ci, true, "", ci->authname, ci->authdesc, priv, false, true))
@@ -3099,7 +3159,11 @@ namespace server
                 userinfo *u = users.access(userkey(ci->authname, ci->authdesc));
                 if(u)
                 {
-                    if(ci->connectauth) connected(ci);
+                    if(ci->connectauth)
+                    {
+                        if(u->privilege >= PRIV_ADMIN || allowauthconnect == 1) connected(ci);
+                        else { ci->cleanauth(); return false; }
+                    }
                     if(ci->authkickvictim >= 0)
                     {
                         if(setmaster(ci, true, "", ci->authname, ci->authdesc, u->privilege, false, true))
@@ -3187,6 +3251,8 @@ namespace server
 
     void connected(clientinfo *ci)
     {
+        logoutf("clientinfo: %s joined, playermodel: %d", colorname(ci, ci->name, true), ci->playermodel);
+
         if(m_demo) enddemoplayback();
 
         if(!hasmap(ci)) rotatemap(false);
@@ -3583,7 +3649,7 @@ namespace server
                 filtertext(text, text, false, MAXNAMELEN);
                 if(!text[0]) copystring(text, "unnamed");
                 if(checkmute(ci, type, text)) break;
-                if(isdedicatedserver()) logoutf("rename: %s to %s", colorname(ci, ci->name, true), text);
+                if(isdedicatedserver()) logoutf("clientinfo: %s renamed to %s", colorname(ci, ci->name, true), text);
                 copystring(ci->name, text);
                 if(!ci->spy) QUEUE_STR(ci->name);
                 break;
@@ -3592,6 +3658,7 @@ namespace server
             case N_SWITCHMODEL:
             {
                 ci->playermodel = getint(p);
+                if(isdedicatedserver()) logoutf("clientinfo: %s changed model to %d", colorname(ci, ci->name, true), ci->playermodel);
                 if(!ci->spy) QUEUE_MSG;
                 break;
             }
