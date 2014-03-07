@@ -122,5 +122,6 @@ namespace server
     extern void masterdisconnected(int m);
     extern bool ispaused();
     extern int scaletime(int t);
+    extern void readban(const char *name, enet_uint32 *cip, enet_uint32 *cmask);
 }
 

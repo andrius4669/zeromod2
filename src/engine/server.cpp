@@ -523,6 +523,18 @@ void flushmasterinput(int m)
     else disconnectmaster(m);
 }
 
+struct nbaninfo
+{
+    enet_uint32 ip, mask;
+};
+vector<nbaninfo> nbans;
+
+ICOMMAND(clearnbans, "", (), nbans.shrink(0));
+ICOMMAND(nban, "s", (const char *s), {
+    nbaninfo &nbi = nbans.add();
+    server::readban(s, &nbi.ip, &nbi.mask);
+});
+
 static ENetAddress pongaddr;
 
 void sendserverinforeply(ucharbuf &p)
@@ -566,6 +578,7 @@ void checkserversockets()        // reply all server info requests
         buf.dataLength = sizeof(pong);
         int len = enet_socket_receive(sock, &pongaddr, &buf, 1);
         if(len < 0 || len > MAXPINGDATA) continue;
+        loopv(nbans) if((pongaddr.host & nbans[i].mask) == nbans[i].ip) continue;
         ucharbuf req(pong, len), p(pong, sizeof(pong));
         p.len += len;
         server::serverinforeply(req, p);
@@ -593,6 +606,12 @@ void checkserversockets()        // reply all server info requests
         }
         if(masterservers[i].mastersock != ENET_SOCKET_NULL && ENET_SOCKETSET_CHECK(readset, masterservers[i].mastersock)) flushmasterinput(i);
     }
+}
+
+static int serverintercept(ENetHost *host, ENetEvent *event)
+{
+    loopv(nbans) if((host->receivedAddress.host & nbans[i].mask) == nbans[i].ip) return 1;
+    return 0;
 }
 
 VAR(serveruprate, 0, 0, INT_MAX);
@@ -1100,6 +1119,8 @@ bool servererror(bool dedicated, const char *desc)
     return false;
 }
   
+VAR(uselansocket, 0, 1, 1);
+
 bool setuplistenserver(bool dedicated)
 {
     ENetAddress address = { ENET_HOST_ANY, enet_uint16(serverport <= 0 ? server::serverport() : serverport) };
@@ -1112,6 +1133,7 @@ bool setuplistenserver(bool dedicated)
     if(!serverhost) return servererror(dedicated, "could not create server host");
     serverhost->duplicatePeers = maxdupclients ? maxdupclients : MAXCLIENTS;
     loopi(serverhost->peerCount) serverhost->peers[i].data = NULL;
+    serverhost->intercept = serverintercept;
     address.port = server::serverinfoport(serverport > 0 ? serverport : -1);
     pongsock = enet_socket_create(ENET_SOCKET_TYPE_DATAGRAM);
     if(pongsock != ENET_SOCKET_NULL && enet_socket_bind(pongsock, &address) < 0)
@@ -1122,13 +1144,13 @@ bool setuplistenserver(bool dedicated)
     if(pongsock == ENET_SOCKET_NULL) return servererror(dedicated, "could not create server info socket");
     else enet_socket_set_option(pongsock, ENET_SOCKOPT_NONBLOCK, 1);
     address.port = server::laninfoport();
-    lansock = enet_socket_create(ENET_SOCKET_TYPE_DATAGRAM);
+    lansock = uselansocket ? enet_socket_create(ENET_SOCKET_TYPE_DATAGRAM) : ENET_SOCKET_NULL;
     if(lansock != ENET_SOCKET_NULL && (enet_socket_set_option(lansock, ENET_SOCKOPT_REUSEADDR, 1) < 0 || enet_socket_bind(lansock, &address) < 0))
     {
         enet_socket_destroy(lansock);
         lansock = ENET_SOCKET_NULL;
     }
-    if(lansock == ENET_SOCKET_NULL) conoutf(CON_WARN, "WARNING: could not create LAN server info socket");
+    if(lansock == ENET_SOCKET_NULL) { if(uselansocket) conoutf(CON_WARN, "WARNING: could not create LAN server info socket"); }
     else enet_socket_set_option(lansock, ENET_SOCKOPT_NONBLOCK, 1);
     return true;
 }
