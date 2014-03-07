@@ -789,6 +789,35 @@ namespace server
         sendf(ci ? ci->clientnum : -1, 1, "ris", N_SERVMSG, s);
     }
 
+    void readban(const char *name, enet_uint32 *cip, enet_uint32 *cmask)
+    {
+        union { uchar b[sizeof(enet_uint32)]; enet_uint32 i; } ip, mask;
+        ip.i = 0;
+        mask.i = 0;
+        const char *cidr = strchr(name, '/');
+        loopi(4)
+        {
+            char *end = NULL;
+            int n = strtol(name, &end, 10);
+            if(!end) break;
+            if(end > name) { ip.b[i] = n; mask.b[i] = 0xFF; }
+            name = end;
+            while(*name && *name++ != '.');
+        }
+        if(cidr && *++cidr)
+        {
+            int n = min(atoi(cidr), 32);
+            if(n > 0)
+            {
+                mask.i = 0;
+                loopi(n) mask.b[i >> 3] |= 1 << (7 - (i & 7));
+                ip.i &= mask.i;
+            }
+        }
+        if(cip) *cip = ip.i;
+        if(cmask) *cmask = mask.i;
+    }
+
     void resetitems()
     {
         mcrc = 0;
@@ -2213,7 +2242,7 @@ namespace server
             clientinfo &ci = *clients[i];
             if(!strcmp(ci.team, "good")) continue;
             copystring(ci.team, "good", MAXTEAMLEN+1);
-            sendf(!ci.spy ? -1 : ci->ownernum, 1, "riisi", N_SETTEAM, ci.clientnum, ci.team, -1);
+            sendf(!ci.spy ? -1 : ci.ownernum, 1, "riisi", N_SETTEAM, ci.clientnum, ci.team, -1);
         }
 
         if(m_capture) smode = &capturemode;
@@ -2756,9 +2785,15 @@ namespace server
     // hardbans :3
     struct hbaninfo
     {
-        int ip, mask;
+        enet_uint32 ip, mask;
     };
     vector<hbaninfo> hbans;
+
+    ICOMMAND(clearhbans, "", (), hbans.shrink(0));
+    ICOMMAND(hban, "s", (const char *s), {
+        hbaninfo &hbi = hbans.add();
+        readban(s, &hbi.ip, &hbi.mask);
+    });
 
     int clientconnect(int n, uint ip)
     {
@@ -2979,32 +3014,8 @@ namespace server
 
     void addgban(int m, const char *name, clientinfo *actor = NULL)
     {
-        union { uchar b[sizeof(enet_uint32)]; enet_uint32 i; } ip, mask;
-        ip.i = 0;
-        mask.i = 0;
-        const char *cidr = strchr(name, '/');
-        loopi(4)
-        {
-            char *end = NULL;
-            int n = strtol(name, &end, 10);
-            if(!end) break;
-            if(end > name) { ip.b[i] = n; mask.b[i] = 0xFF; }
-            name = end;
-            while(*name && *name++ != '.');
-        }
-        if(cidr && *++cidr)
-        {
-            int n = min(atoi(cidr), 32);
-            if(n > 0)
-            {
-                mask.i = 0;
-                loopi(n) mask.b[i >> 3] |= 1 << (7 - (i & 7));
-                ip.i &= mask.i;
-            }
-        }
         gbaninfo &ban = gbans.add();
-        ban.ip = ip.i;
-        ban.mask = mask.i;
+        readban(name, &ban.ip, &ban.mask);
         ban.master = m;
 
         loopvrev(clients)
@@ -3773,7 +3784,7 @@ namespace server
                         allowedips.shrink(0);
                         if(mm>=MM_PRIVATE)
                         {
-                            loopv(clients) allowedips.add(getclientip(clients[i]->clientnum));
+                            loopv(clients) if(clients[i]->state.aitype==AI_NONE) allowedips.add(getclientip(clients[i]->clientnum));
                         }
                         sendf(-1, 1, "rii", N_MASTERMODE, mastermode);
                         //sendservmsgf("mastermode is now %s (%d)", mastermodename(mastermode), mastermode);
