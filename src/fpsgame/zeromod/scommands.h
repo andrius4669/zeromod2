@@ -25,11 +25,14 @@ struct scommandar: scommandstruct
 
 #define SCOMMAND(n, f, p, a) scommandar _scmd_##n(#n, f, p, a, false);
 #define SCOMMANDH(n, f, p, a) scommandar _scmd_##n(#n, f, p, a, true);
+#define SCOMMANDI(n, p, a, body) void _scmdf_##n(int argc, char **argv, clientinfo *ci) { body; } _scmd_##n(#n, _scmdf_##n, p, a, false);
+#define SCOMMANDIH(n, p, a, body) void _scmdf_##n(int argc, char **argv, clientinfo *ci) { body; } _scmd_##n(#n, _scmdf_##n, p, a, true);
 
 extern void scommandprivfail(clientinfo *ci, scommandstruct *cc);
 extern void scommandnotfound(clientinfo *ci, const char *cmd);
 extern void scommandbadusage(clientinfo *ci, const char *cmd);
 extern void scommandbadcn(clientinfo *ci, int cn);
+extern clientinfo *findclient(const char *s, bool allowbots = true, clientinfo *caller = NULL);
 
 #endif
 
@@ -144,6 +147,17 @@ bool parsecommand(clientinfo *ci, char *cmd, bool iscommand)
     }
     cc->fun(argc, argv, ci);
     return true;
+}
+
+clientinfo *findclient(const char *s, bool allowbots, clientinfo *caller)
+{
+    int cn = atoi(s);
+    if(!cn && strcmp(s, "0"))
+    {
+        if(caller && !strcmp(s, "me")) return caller;
+        return NULL;
+    }
+    return allowbots ? getinfo(cn) : (clientinfo *)getclientinfo(cn);
 }
 
 #endif

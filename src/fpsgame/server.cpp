@@ -489,9 +489,9 @@ namespace server
             if(rot.match(mode, map)) return i;
         }
         int start;
-        for(start = max(curmaprotation, 0) - 1; start >= 0; start--) if(!maprotations[start].modes) break;
+        for(start = clamp(curmaprotation, 0, maprotations.length()) - 1; start >= 0; start--) if(!maprotations[start].modes) break;
         start++;
-        for(int i = start; i < curmaprotation; i++)
+        for(int i = start; i < min(curmaprotation, maprotations.length()); i++)
         {
             maprotation &rot = maprotations[i];
             if(!rot.modes) break;
@@ -2277,19 +2277,15 @@ namespace server
 
     void rotatemap(bool next)
     {
-        if(!maprotations.inrange(curmaprotation))
-        {
-            changemap("", 1);
-            return;
-        }
         curmaprotation = findmaprotation(gamemode, smapname);
-        if(next) 
+        if(curmaprotation < 0) { if(smapname[0]) curmaprotation = findmaprotation(gamemode, ""); }
+        else if(next) nextmaprotation();
+        if(maprotations.inrange(curmaprotation) && maprotations[curmaprotation].modes)
         {
-            if(curmaprotation >= 0) nextmaprotation();
-            else curmaprotation = smapname[0] ? max(findmaprotation(gamemode, ""), 0) : 0;
+            maprotation &rot = maprotations[curmaprotation];
+            changemap(rot.map, rot.findmode(gamemode));
         }
-        maprotation &rot = maprotations[curmaprotation];
-        changemap(rot.map, rot.findmode(gamemode));
+        else changemap(smapname, gamemode);        
     }
     
     struct votecount
@@ -3231,6 +3227,34 @@ namespace server
         else if(sscanf(cmd, "addgban %100s", val) == 1)
             addgban(m, val);
     }
+
+    bool sendmap(clientinfo *ci, clientinfo *by, stream *map = NULL)
+    {
+        if(!map) map = mapdata;
+        if(!map) { if(by) sendf(by->clientnum, 1, "ris", N_SERVMSG, "no map to send"); }
+        else if(ci->getmap) { if(by) sendf(by->clientnum, 1, "ris", N_SERVMSG, "already sending map"); }
+        else
+        {
+            sendservmsgf("[%s is getting the map]", !ci->spy ? colorname(ci) : "\fs\f3REMOTE\fr");
+            if((ci->getmap = sendfile(ci->clientnum, 2, map, "ri", N_SENDMAP)))
+                ci->getmap->freeCallback = freegetmap;
+            ci->needclipboard = totalmillis ? totalmillis : 1;
+            return true;
+        }
+        return false;
+    }
+
+    void scmd_sendto(int argc, char **argv, clientinfo *ci)
+    {
+        if(argc < 2) { scommandbadusage(ci, argv[0]); return; }
+        int cn = atoi(argv[1]);
+        if(!cn && strcmp(argv[1], "0")) { scommandbadusage(ci, argv[0]); return; }
+        clientinfo *cx = (clientinfo *)getclientinfo(cn);
+        if(!cx) { scommandbadcn(ci, cn); return; }
+        sendmap(cx, ci);
+    }
+    SCOMMAND(sendto, scmd_sendto, PRIV_MASTER, 0);
+    SCOMMANDH(sendmap, scmd_sendto, PRIV_MASTER, 0);
 
     void receivefile(int sender, uchar *data, int len)
     {
