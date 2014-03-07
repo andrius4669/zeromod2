@@ -2748,7 +2748,7 @@ namespace server
 
     void sendservinfo(clientinfo *ci)
     {
-        sendf(ci->clientnum, 1, "ri5ss", N_SERVINFO, ci->clientnum, PROTOCOL_VERSION, ci->sessionid, serverpass[0] ? 1 : 0, serverdesc, serverauth);
+        sendf(ci->clientnum, 1, "ri5ss", N_SERVINFO, ci->clientnum, PROTOCOL_VERSION, ci->sessionid, (serverpass[0] || mastermode==MM_PASSWORD) ? 1 : 0, serverdesc, serverauth);
     }
 
     void noclients()
@@ -2967,7 +2967,7 @@ namespace server
         }
         else
         {
-            if(mastermode < MM_LOCKED) setspectator(ci, false, true);
+            if(mastermode < MM_LOCKED || mastermode > MM_PRIVATE) setspectator(ci, false, true);
             sendresume(ci);
             sendinitclient(ci);
             aiman::addclient(ci);
@@ -3246,6 +3246,7 @@ namespace server
 
     void scmd_sendto(int argc, char **argv, clientinfo *ci)
     {
+        if(!m_edit) { toclientf(ci, "\"%s\" only works in coop edit mode", argv[0]); return; }
         if(argc < 2) { scommandbadusage(ci, argv[0]); return; }
         int cn = atoi(argv[1]);
         if(!cn && strcmp(argv[1], "0")) { scommandbadusage(ci, argv[0]); return; }
@@ -3300,7 +3301,7 @@ namespace server
         ci->connectauth = 0;
         ci->connected = true;
         ci->needclipboard = totalmillis ? totalmillis : 1;
-        if(mastermode>=MM_LOCKED || ci->spy) ci->state.state = CS_SPECTATOR;
+        if((mastermode>=MM_LOCKED && mastermode<=MM_PRIVATE) || ci->spy) ci->state.state = CS_SPECTATOR;
         ci->state.lasttimeplayed = lastmillis;
 
         const char *worst = m_teammode ? chooseworstteam(NULL, ci) : NULL;
@@ -3844,7 +3845,7 @@ namespace server
             case N_SPECTATOR:
             {
                 int spectator = getint(p), val = getint(p);
-                if(!ci->privilege && !ci->local && (spectator!=sender || (ci->state.state==CS_SPECTATOR && mastermode>=MM_LOCKED))) break;
+                if(!ci->privilege && !ci->local && (spectator!=sender || (ci->state.state==CS_SPECTATOR && (mastermode>=MM_LOCKED && mastermode<=MM_PRIVATE)))) break;
                 clientinfo *spinfo = (clientinfo *)getclientinfo(spectator); // no bots
                 if(!spinfo || !spinfo->connected || (spinfo->state.state==CS_SPECTATOR ? val : !val)) break;
                 if(!ci->privilege && !ci->local && spectator==sender && checkmute(ci, type, val ? "" : NULL)) break;
