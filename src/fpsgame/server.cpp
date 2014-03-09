@@ -1549,6 +1549,8 @@ namespace server
     extern void connected(clientinfo *ci);
     extern void sendprivileges(clientinfo *ci, int priv, const char *lostr, const char *histr);
 
+    VAR(mastermodereset, 0, 1, 1);
+
     bool setmaster(clientinfo *ci, bool val, const char *pass = "", const char *authname = NULL, const char *authdesc = NULL, int authpriv = PRIV_MASTER, bool force = false, bool trial = false, bool hidden = false)
     {
         if(authname && !val) return false;
@@ -1592,12 +1594,15 @@ namespace server
             name = privname(ci->privilege);
             revokemaster(ci);
         }
-        bool hasmaster = false;
-        loopv(clients) if(clients[i]->local || clients[i]->privilege >= PRIV_MASTER) { hasmaster = true; break; }
-        if(!hasmaster)
+        if(mastermodereset)
         {
-            mastermode = defaultmastermode;
-            if(mastermode < MM_PRIVATE) allowedips.shrink(0);
+            bool hasmaster = false;
+            loopv(clients) if(clients[i]->local || clients[i]->privilege >= PRIV_MASTER) { hasmaster = true; break; }
+            if(!hasmaster)
+            {
+                mastermode = defaultmastermode;
+                if(mastermode < MM_PRIVATE) allowedips.shrink(0);
+            }
         }
         string msg;
         bool washidden = ci->hidepriv || ci->spy;
@@ -2767,6 +2772,8 @@ namespace server
         ci->connectmillis = totalmillis;
         ci->sessionid = (rnd(0x1000000)*((totalmillis%10000)+1))&0xFFFFFF;
         ci->local = true;
+
+        logoutf("connect: client %d (%s) connected", n, getclienthostname(n));
 
         connects.add(ci);
         sendservinfo(ci);
