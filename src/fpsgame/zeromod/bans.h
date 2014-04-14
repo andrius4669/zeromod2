@@ -1,6 +1,6 @@
 /* header for pbans management and some gbans server commands */
 
-void formatgban(char *s, int n, bool forcecidr = false)
+static void formatgban(char *s, int n, bool forcecidr = false)
 {
     union { uchar b[sizeof(enet_uint32)]; enet_uint32 i; } ip, mask;
     ip.i = gbans[n].ip;

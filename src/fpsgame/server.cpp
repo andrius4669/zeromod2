@@ -244,6 +244,8 @@ namespace server
         bool spy, hidepriv;
         bool nexthidepriv;
         char *disconnectmessage;
+        bool mute, editmute, specmute;
+        int lastmutemsg, lasteditmutemsg;
 
         clientinfo() : getdemo(NULL), getmap(NULL), clipboard(NULL), authchallenge(NULL), authkickreason(NULL), disconnectmessage(NULL) { reset(); }
         ~clientinfo() { events.deletecontents(); cleanclipboard(); cleanauth(); }
@@ -345,6 +347,8 @@ namespace server
             playermodel = -1;
             privilege = PRIV_NONE;
             hidepriv = spy = nexthidepriv = false;
+            mute = editmute = specmute = false;
+            lastmutemsg = lasteditmutemsg = 0;
             connected = local = false;
             connectauth = 0;
             position.setsize(0);
@@ -373,6 +377,8 @@ namespace server
     {
         int time, expire;
         uint ip;
+        int type, priv;
+        const char *reason;
     };
 
     namespace aiman
@@ -806,11 +812,12 @@ namespace server
         }
         if(cidr && *++cidr)
         {
-            int n = min(atoi(cidr), 32);
+            int n = atoi(cidr);
             if(n > 0)
             {
-                mask.i = 0;
-                loopi(n) mask.b[i >> 3] |= 1 << (7 - (i & 7));
+                //mask.i = 0;
+                //loopi(n) mask.b[i >> 3] |= 1 << (7 - (i & 7));
+                for(int i = n; i < 32; i++) mask.b[i/8] &= ~(1 << (7 - (i & 7)));
                 ip.i &= mask.i;
             }
         }
@@ -3410,6 +3417,7 @@ namespace server
         #define QUEUE_UINT(n) QUEUE_BUF(putuint(cm->messages, n))
         #define QUEUE_STR(text) QUEUE_BUF(sendstring(text, cm->messages))
         int curmsg;
+        int mi = 0;
         while((curmsg = p.length()) < p.maxlen) switch(type = checktype(getint(p), ci))
         {
             case N_POS:
@@ -3492,6 +3500,9 @@ namespace server
             case N_EDITMODE:
             {
                 int val = getint(p);
+                mi = messageintercept(chan, sender, ci, cq, type, val);
+                if(mi > 0) break;
+                else if(mi < 0) return;
                 if(!ci->local && !m_edit) break;
                 if(val ? ci->state.state!=CS_ALIVE && ci->state.state!=CS_DEAD : ci->state.state!=CS_EDITING) break;
                 if(smode)
@@ -3516,6 +3527,9 @@ namespace server
             {
                 getstring(text, p);
                 int crc = getint(p);
+                mi = messageintercept(chan, sender, ci, cq, type, text, crc);
+                if(mi > 0) break;
+                else if(mi < 0) return;
                 if(!ci) break;
                 if(strcmp(text, smapname))
                 {
@@ -3538,6 +3552,9 @@ namespace server
                 break;
 
             case N_TRYSPAWN:
+                mi = messageintercept(chan, sender, ci, cq, type);
+                if(mi > 0) break;
+                else if(mi < 0) return;
                 if(!ci || !cq || cq->state.state!=CS_DEAD || cq->state.lastspawn>=0 || (smode && !smode->canspawn(cq))) break;
                 if(!ci->clientmap[0] && !ci->mapcrc)
                 {
@@ -3556,6 +3573,9 @@ namespace server
             case N_GUNSELECT:
             {
                 int gunselect = getint(p);
+                mi = messageintercept(chan, sender, ci, cq, type, gunselect);
+                if(mi > 0) break;
+                else if(mi < 0) return;
                 if(!cq || cq->state.state!=CS_ALIVE) break;
                 cq->state.gunselect = gunselect >= GUN_FIST && gunselect <= GUN_PISTOL ? gunselect : GUN_FIST;
                 QUEUE_AI;
@@ -3566,6 +3586,9 @@ namespace server
             case N_SPAWN:
             {
                 int ls = getint(p), gunselect = getint(p);
+                mi = messageintercept(chan, sender, ci, cq, type, ls, gunselect);
+                if(mi > 0) break;
+                else if(mi < 0) return;
                 if(!cq || (cq->state.state!=CS_ALIVE && cq->state.state!=CS_DEAD) || ls!=cq->state.lifesequence || cq->state.lastspawn<0) break;
                 cq->state.lastspawn = -1;
                 cq->state.state = CS_ALIVE;
@@ -3582,6 +3605,9 @@ namespace server
 
             case N_SUICIDE:
             {
+                mi = messageintercept(chan, sender, ci, cq, type);
+                if(mi > 0) break;
+                else if(mi < 0) return;
                 if(cq) cq->addevent(new suicideevent);
                 break;
             }
@@ -3652,7 +3678,9 @@ namespace server
                 getstring(text, p);
                 if(parsecommand(ci, text, false)) break;
                 filtertext(text, text);
-                if(checkmute(ci, type, text)) break;
+                mi = messageintercept(chan, sender, ci, cq, type, text);
+                if(mi > 0) break;
+                else if(mi < 0) return;
                 if(isdedicatedserver() && cq) logoutf("chat: %s: %s", colorname(cq, cq->name, true), text);
                 if(ci->spy) { sendservmsgf("\fs\f3REMOTE:\f0 %s\fr", text); break; }
                 QUEUE_AI;
@@ -3664,8 +3692,10 @@ namespace server
             case N_SAYTEAM:
             {
                 getstring(text, p);
-                if(!ci || !cq || (cq->state.aitype!=AI_NONE && ci->state.state==CS_SPECTATOR && (ci->spy || (!ci->local && !ci->privilege)))) break;
-                if(checkmute(ci, type, text)) break;
+                if(!ci || !cq || (cq->state.aitype!=AI_NONE && ci->state.state==CS_SPECTATOR && (ci->spy || (!ci->local && !ci->privilege))) || !cq->team[0]) break;
+                mi = messageintercept(chan, sender, ci, cq, type, text);
+                if(mi > 0) break;
+                else if(mi < 0) return;
                 if(ci->spy)
                 {
                     filtertext(text, text);
@@ -3677,11 +3707,11 @@ namespace server
                 loopv(clients)
                 {
                     clientinfo *t = clients[i];
-                    if(t==cq || (t->state.state==CS_SPECTATOR) != (cq->state.state==CS_SPECTATOR) ||
-                        t->state.aitype != AI_NONE || (t->state.state!=CS_SPECTATOR && strcmp(cq->team, t->team))) continue;
+                    if(t==cq || (t->state.state==CS_SPECTATOR) != (cq->state.state==CS_SPECTATOR) || !t->team[0] ||
+                        t->state.aitype != AI_NONE || (m_teammode && cq->state.state!=CS_SPECTATOR && strcmp(cq->team, t->team))) continue;
                     sendf(t->clientnum, 1, "riis", N_SAYTEAM, cq->clientnum, text);
                 }
-                if(isdedicatedserver()) logoutf("chat: %s <%s>: %s", colorname(cq, cq->name, true), cq->team, text);
+                if(isdedicatedserver()) logoutf("chat: %s <%s>: %s", colorname(cq, cq->name, true), cq->state.state!=CS_SPECTATOR ? cq->team : "spectator", text);
                 break;
             }
 
@@ -3691,7 +3721,9 @@ namespace server
                 getstring(text, p);
                 filtertext(text, text, false, MAXNAMELEN);
                 if(!text[0]) copystring(text, "unnamed");
-                if(checkmute(ci, type, text)) break;
+                mi = messageintercept(chan, sender, ci, cq, type, text);
+                if(mi > 0) break;
+                else if(mi < 0) return;
                 if(isdedicatedserver()) logoutf("clientinfo: %s renamed to %s", colorname(ci, ci->name, true), text);
                 copystring(ci->name, text);
                 if(!ci->spy) QUEUE_STR(ci->name);
@@ -3700,7 +3732,11 @@ namespace server
 
             case N_SWITCHMODEL:
             {
-                ci->playermodel = getint(p);
+                int pm = getint(p);
+                mi = messageintercept(chan, sender, ci, cq, type, pm);
+                if(mi > 0) break;
+                else if(mi < 0) return;
+                ci->playermodel = pm;
                 if(isdedicatedserver()) logoutf("clientinfo: %s changed model to %d", colorname(ci, ci->name, true), ci->playermodel);
                 if(!ci->spy) QUEUE_MSG;
                 break;
@@ -3710,7 +3746,9 @@ namespace server
             {
                 getstring(text, p);
                 filtertext(text, text, false, MAXTEAMLEN);
-                if(checkmute(ci, type, text)) break;
+                mi = messageintercept(chan, sender, ci, cq, type, text);
+                if(mi > 0) break;
+                else if(mi < 0) return;
                 if(m_teammode && text[0] && strcmp(ci->team, text) && (!smode || smode->canchangeteam(ci, ci->team, text)) && addteaminfo(text))
                 {
                     if(ci->state.state==CS_ALIVE) suicide(ci);
@@ -3726,7 +3764,9 @@ namespace server
                 getstring(text, p);
                 filtertext(text, text, false);
                 int reqmode = getint(p);
-                if(checkmute(ci, type, text)) break;
+                mi = messageintercept(chan, sender, ci, cq, type, text, reqmode);
+                if(mi > 0) break;
+                else if(mi < 0) return;
                 vote(text, reqmode, sender);
                 break;
             }
@@ -3757,7 +3797,9 @@ namespace server
                 int type = getint(p);
                 loopk(5) getint(p);
                 if(!ci || ci->state.state==CS_SPECTATOR) break;
-                if(checkmute(ci, type, NULL)) break;
+                mi = messageintercept(chan, sender, ci, cq, N_EDITENT, i, type);
+                if(mi > 0) break;
+                else if(mi < 0) return;
                 QUEUE_MSG;
                 bool canspawn = canspawnitem(type);
                 if(i<MAXENTS && (sents.inrange(i) || canspawnitem(type)))
@@ -3784,7 +3826,9 @@ namespace server
                     case ID_FVAR: getfloat(p); break;
                     case ID_SVAR: getstring(text, p);
                 }
-                if(checkmute(ci, type, NULL)) break;
+                mi = messageintercept(chan, sender, ci, cq, N_EDITVAR);
+                if(mi > 0) break;
+                else if(mi < 0) return;
                 if(ci && ci->state.state!=CS_SPECTATOR) QUEUE_MSG;
                 break;
             }
@@ -3852,10 +3896,12 @@ namespace server
             case N_SPECTATOR:
             {
                 int spectator = getint(p), val = getint(p);
+                mi = messageintercept(chan, sender, ci, cq, type, spectator, val);
+                if(mi > 0) break;
+                else if(mi < 0) return;
                 if(!ci->privilege && !ci->local && (spectator!=sender || (ci->state.state==CS_SPECTATOR && (mastermode>=MM_LOCKED && mastermode<=MM_PRIVATE)))) break;
                 clientinfo *spinfo = (clientinfo *)getclientinfo(spectator); // no bots
                 if(!spinfo || !spinfo->connected || (spinfo->state.state==CS_SPECTATOR ? val : !val)) break;
-                if(!ci->privilege && !ci->local && spectator==sender && checkmute(ci, type, val ? "" : NULL)) break;
                 if(spectator==sender && ci->spy) { setspy(ci, false); break; }
                 if(isdedicatedserver())
                 {
@@ -3888,6 +3934,9 @@ namespace server
                 int who = getint(p);
                 getstring(text, p);
                 filtertext(text, text, false, MAXTEAMLEN);
+                mi = messageintercept(chan, sender, ci, cq, type, text);
+                if(mi > 0) break;
+                else if(mi < 0) return;
                 if(!ci->privilege && !ci->local) break;
                 clientinfo *wi = getinfo(who);
                 if(!m_teammode || !text[0] || !wi || !wi->connected || !strcmp(wi->team, text)) break;
@@ -3962,8 +4011,10 @@ namespace server
             case N_NEWMAP:
             {
                 int size = getint(p);
+                mi = messageintercept(chan, sender, ci, cq, type, size);
+                if(mi > 0) break;
+                else if(mi < 0) return;
                 if(!ci->privilege && !ci->local && ci->state.state==CS_SPECTATOR) break;
-                if(checkmute(ci, type, NULL)) break;
                 if(size>=0)
                 {
                     smapname[0] = '\0';
@@ -4022,6 +4073,9 @@ namespace server
                 string desc, name;
                 getstring(desc, p, sizeof(desc));
                 getstring(name, p, sizeof(name));
+                mi = messageintercept(chan, sender, ci, cq, type, desc, name);
+                if(mi > 0) break;
+                else if(mi < 0) return;
                 tryauth(ci, name, desc);
                 break;
             }
@@ -4034,6 +4088,9 @@ namespace server
                 int victim = getint(p);
                 getstring(text, p);
                 filtertext(text, text);
+                mi = messageintercept(chan, sender, ci, cq, type, desc, name, victim, text);
+                if(mi > 0) break;
+                else if(mi < 0) return;
                 int authpriv = PRIV_ADMIN;
                 if(desc[0])
                 {
@@ -4054,6 +4111,9 @@ namespace server
                 getstring(desc, p, sizeof(desc));
                 uint id = (uint)getint(p);
                 getstring(ans, p, sizeof(ans));
+                mi = messageintercept(chan, sender, ci, cq, type, desc, id, ans);
+                if(mi > 0) break;
+                else if(mi < 0) return;
                 answerchallenge(ci, id, ans, desc);
                 break;
             }
@@ -4061,6 +4121,9 @@ namespace server
             case N_PAUSEGAME:
             {
                 int val = getint(p);
+                mi = messageintercept(chan, sender, ci, cq, type, val);
+                if(mi > 0) break;
+                else if(mi < 0) return;
                 if(ci->privilege < (restrictpausegame ? PRIV_ADMIN : PRIV_MASTER) && !ci->local) break;
                 pausegame(val > 0, ci);
                 break;
@@ -4069,6 +4132,9 @@ namespace server
             case N_GAMESPEED:
             {
                 int val = getint(p);
+                mi = messageintercept(chan, sender, ci, cq, type, val);
+                if(mi > 0) break;
+                else if(mi < 0) return;
                 if(ci->privilege < (restrictgamespeed ? PRIV_ADMIN : PRIV_MASTER) && !ci->local) break;
                 changegamespeed(val, ci);
                 break;
@@ -4080,7 +4146,9 @@ namespace server
                 goto genericmsg;
 
             case N_PASTE:
-                if(ci->state.state!=CS_SPECTATOR && !checkmute(ci, type, "")) sendclipboard(ci);
+                mi = messageintercept(chan, sender, ci, cq, type, 0);
+                if(mi < 0) return;
+                if(ci->state.state!=CS_SPECTATOR && mi == 0) sendclipboard(ci);
                 goto genericmsg;
     
             case N_CLIPBOARD:
@@ -4132,7 +4200,9 @@ namespace server
                 int size = server::msgsizelookup(type);
                 if(size<=0) { disconnect_client(sender, DISC_MSGERR); return; }
                 loopi(size-1) getint(p);
-                if(checkmute(ci, type, NULL)) break;
+                mi = messageintercept(chan, sender, ci, cq, type);
+                if(mi > 0) break;
+                else if(mi < 0) return;
                 if(ci && cq && (ci != cq || ci->state.state!=CS_SPECTATOR)) { QUEUE_AI; QUEUE_MSG; }
                 break;
             }

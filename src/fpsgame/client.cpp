@@ -434,6 +434,24 @@ namespace game
     }
     COMMAND(hashpwd, "s");
 
+    void rndstr(int *n, int *whitespace)
+    {
+        string str;
+        static union { uint i; uchar c[sizeof(uint)/sizeof(uchar)]; } r;
+        static int i = 4;
+        int l = min(*n, int(sizeof(str)-1));
+        char *p = &str[0];
+        while(p < &str[l])
+        {
+            if(i >= 4) { r.i = randomMT(); i = 0; }
+            *p = r.c[i++];
+            if(iscubeprint(*p) || (*whitespace && iscubespace(*p))) p++;
+        }
+        *p = '\0';
+        result(str);
+    }
+    COMMAND(rndstr, "ii");
+
     void setmaster(const char *arg, const char *who)
     {
         if(!arg[0]) return;
@@ -1899,7 +1917,7 @@ namespace game
     {
         if(remote)
         {
-            if(player1->privilege<PRIV_MASTER) return;
+            //if(player1->privilege<PRIV_MASTER) return;
             addmsg(N_STOPDEMO, "r");
         }
         else server::stopdemo();
@@ -1908,14 +1926,14 @@ namespace game
 
     void recorddemo(int val)
     {
-        if(remote && player1->privilege<PRIV_MASTER) return;
+        //if(remote && player1->privilege<PRIV_MASTER) return;
         addmsg(N_RECORDDEMO, "ri", val);
     }
     ICOMMAND(recorddemo, "i", (int *val), recorddemo(*val));
 
     void cleardemos(int val)
     {
-        if(remote && player1->privilege<PRIV_MASTER) return;
+        //if(remote && player1->privilege<PRIV_MASTER) return;
         addmsg(N_CLEARDEMOS, "ri", val);
     }
     ICOMMAND(cleardemos, "i", (int *val), cleardemos(*val));
