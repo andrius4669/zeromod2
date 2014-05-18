@@ -5,7 +5,7 @@ extern const char *getmasterauthdesc(int m);
 extern const char *getmasteraddress(int m);
 extern int nummasterservers();
 
-#ifdef INCLUDED_IN_SERVER
+#ifdef MULTIMASTERSERV_IMPLEMENTATION
 // masterserver structure
 struct masterserverinfo
 {

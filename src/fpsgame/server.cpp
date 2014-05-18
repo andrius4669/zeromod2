@@ -20,6 +20,9 @@ extern ENetAddress masteraddress;
 
 namespace server
 {
+    // before everything
+    #include "zeromod/extratools.h"
+    
     struct server_entity            // server side version of "entity" type
     {
         int type;
@@ -244,7 +247,7 @@ namespace server
         bool spy, hidepriv;
         bool nexthidepriv;
         char *disconnectmessage;
-        bool mute, editmute, specmute;
+        int mute, editmute, specmute;
         int lastmutemsg, lasteditmutemsg;
 
         clientinfo() : getdemo(NULL), getmap(NULL), clipboard(NULL), authchallenge(NULL), authkickreason(NULL), disconnectmessage(NULL) { reset(); }
@@ -347,7 +350,7 @@ namespace server
             playermodel = -1;
             privilege = PRIV_NONE;
             hidepriv = spy = nexthidepriv = false;
-            mute = editmute = specmute = false;
+            mute = editmute = specmute = 0;
             lastmutemsg = lasteditmutemsg = 0;
             connected = local = false;
             connectauth = 0;
@@ -373,12 +376,19 @@ namespace server
         }
     };
 
+    // after clientinfo struct
+    #include "zeromod/extratools2.h"
+    
+    // before ban struct
+    #include "zeromod/extrabansinc.h"
+    
     struct ban
     {
         int time, expire;
         uint ip;
-        int type, priv;
-        const char *reason;
+        uint type;
+        int priv;
+        char *reason;
     };
 
     namespace aiman
@@ -438,6 +448,9 @@ namespace server
             if(getclientip(c.clientnum) == ip) disconnect_client(c.clientnum, DISC_KICK);
         }
     }
+    
+    // after ban struct, bannedips array and bans helper funcs
+    #include "zeromod/extrabansinc2.h"
  
     struct maprotation
     {
@@ -777,52 +790,14 @@ namespace server
         }
     }
 
-    #define SCMD_HEAD 1
+    // server commands
     #include "zeromod/scommands.h"
-    #undef SCMD_HEAD
 
     void sendservmsg(const char *s) { sendf(-1, 1, "ris", N_SERVMSG, s); }
     void sendservmsgf(const char *fmt, ...)
     {
          defvformatstring(s, fmt, fmt);
          sendf(-1, 1, "ris", N_SERVMSG, s);
-    }
-
-    void toclient(clientinfo *ci, const char *s) { sendf(ci ? ci->clientnum : -1, 1, "ris", N_SERVMSG, s); }
-    void toclientf(clientinfo *ci, const char *fmt, ...)
-    {
-        defvformatstring(s, fmt, fmt);
-        sendf(ci ? ci->clientnum : -1, 1, "ris", N_SERVMSG, s);
-    }
-
-    void readban(const char *name, enet_uint32 *cip, enet_uint32 *cmask)
-    {
-        union { uchar b[sizeof(enet_uint32)]; enet_uint32 i; } ip, mask;
-        ip.i = 0;
-        mask.i = 0;
-        const char *cidr = strchr(name, '/');
-        loopi(4)
-        {
-            char *end = NULL;
-            int n = strtol(name, &end, 10);
-            if(!end) break;
-            if(end > name) { ip.b[i] = n; mask.b[i] = 0xFF; }
-            name = end;
-            while(*name && *name++ != '.');
-        }
-        if(cidr && *++cidr)
-        {
-            int n = atoi(cidr);
-            if(n > 0)
-            {
-                //mask.i = 0;
-                //loopi(n) mask.b[i >> 3] |= 1 << (7 - (i & 7));
-                for(int i = n; i < 32; i++) mask.b[i/8] &= ~(1 << (7 - (i & 7)));
-                ip.i &= mask.i;
-            }
-        }
-        if(cip) *cip = ip.i;
-        if(cmask) *cmask = mask.i;
     }
 
     void resetitems()
@@ -1545,13 +1520,6 @@ namespace server
         ci->privilege = PRIV_NONE;
         if((ci->state.state==CS_SPECTATOR && !ci->local) || ci->spy) aiman::removeai(ci);
     }
-
-    void scmd_hidepriv(int argc, char **argv, clientinfo *ci)
-    {
-        ci->nexthidepriv = !ci->nexthidepriv;
-        toclientf(ci, "next claim will be %s", ci->nexthidepriv ? "hidden" : "visible");
-    }
-    SCOMMANDH(hidepriv, scmd_hidepriv, 0, 0);
 
     extern void connected(clientinfo *ci);
     extern void sendprivileges(clientinfo *ci, int priv, const char *lostr, const char *histr);
@@ -2411,14 +2379,6 @@ namespace server
             nodamage = defaultnodamage;
         }
     });
-    void scmd_nodamage(int argc, char **argv, clientinfo *ci)
-    {
-        int m = -1;
-        if(argc>=2) switch(argv[1][0]) { case '0': m = 0; break; case '1': m = 1; break; }
-        if(m >= 0) { if(nodamage == m || nodamage < 0) m = -1; else nodamage = m; }
-        toclientf(m < 0 ? ci : NULL, "nodamage %s", nodamage>0 ? "enabled" : nodamage<0 ? "disabled in server configuration" : "disabled");
-    }
-    SCOMMAND(nodamage, scmd_nodamage, PRIV_MASTER, 0);
     VAR(protectteamscores, 0, 0, 1);    // protect scores from suiciders
 
     void dodamage(clientinfo *target, clientinfo *actor, int damage, int gun, const vec &hitpush = vec(0, 0, 0))
@@ -2708,6 +2668,8 @@ namespace server
         static bool compare(const crcinfo &x, const crcinfo &y) { return x.matches > y.matches; }
     };
 
+    VAR(checkmaps_autospectate, 0, 0, 1);       // autospectates clients with modified maps
+    extern void setspectator(clientinfo *spinfo, bool val, bool visible = true, clientinfo *by = NULL);
     void checkmaps(int req = -1)
     {
         if(m_edit || !smapname[0]) return;
@@ -2742,6 +2704,12 @@ namespace server
             formatstring(msg)("%s has modified map \"%s\"", colorname(ci), smapname);
             sendf(req, 1, "ris", N_SERVMSG, msg);
             if(req < 0) ci->warned = true;
+            if(checkmaps_autospectate)
+            {
+                setspectator(ci, true);
+                ci->specmute = 1;
+                sendf(ci->clientnum, 1, "ris", N_SERVMSG, "you have been spectated because of modified map");
+            }
         }
         if(crcs.empty() || crcs.length() < 2) return;
         loopv(crcs)
@@ -2754,6 +2722,12 @@ namespace server
                 formatstring(msg)("%s has modified map \"%s\"", colorname(ci), smapname);
                 sendf(req, 1, "ris", N_SERVMSG, msg);
                 if(req < 0) ci->warned = true;
+                if(checkmaps_autospectate)
+                {
+                    setspectator(ci, true);
+                    ci->specmute = 1;
+                    sendf(ci->clientnum, 1, "ris", N_SERVMSG, "you have been spectated because of modified map");
+                }
             }
         }
     }
@@ -2792,7 +2766,6 @@ namespace server
         clientdisconnect(n, true, DISC_NONE);
     }
 
-    // hardbans :3
     struct hbaninfo
     {
         enet_uint32 ip, mask;
@@ -2868,7 +2841,7 @@ namespace server
         DELETEA(ci->disconnectmessage);
     }
 
-    void setspectator(clientinfo *spinfo, bool val, bool visible = true, clientinfo *by = NULL)
+    void setspectator(clientinfo *spinfo, bool val, bool visible, clientinfo *by)
     {
         if(!spinfo || !spinfo->connected || spinfo->state.aitype!=AI_NONE || (spinfo->state.state==CS_SPECTATOR ? val : !val)) return;
         if(isdedicatedserver())
@@ -2890,9 +2863,9 @@ namespace server
             spinfo->state.respawn();
             spinfo->state.lasttimeplayed = lastmillis;
             aiman::addclient(spinfo);
-            if(spinfo->clientmap[0] || spinfo->mapcrc) checkmaps();
         }
         sendf(visible ? -1 : spinfo->clientnum, 1, "ri3", N_SPECTATOR, spinfo->clientnum, val);
+        if(!val && (spinfo->clientmap[0] || spinfo->mapcrc)) checkmaps();
         if(!val && !hasmap(spinfo)) rotatemap(true);
     }
 
@@ -3037,7 +3010,7 @@ namespace server
         }
     }
 
-    #include "zeromod/bans.h"
+    #include "zeromod/scmd_bans.h"
 
     int allowconnect(clientinfo *ci, const char *pwd = "")
     {
@@ -3079,7 +3052,7 @@ namespace server
         if(!ci) return;
         int om = ci->authmaster;
         ci->cleanauth(false);
-        for(int m = findauthmaster(ci->authdesc, om); m >= 0; findauthmaster(ci->authdesc, m))
+        for(int m = findauthmaster(ci->authdesc, om); m >= 0; m = findauthmaster(ci->authdesc, m))
         {
             if(!ci->authreq) { if(!nextauthreq) nextauthreq = 1; ci->authreq = nextauthreq++; }
             if(requestmasterf(m, "reqauth %u %s\n", ci->authreq, ci->authname)) { ci->authmaster = m; break; }
@@ -3136,7 +3109,7 @@ namespace server
         if(ci->authdesc[0])
         {
             userinfo *u = users.access(userkey(ci->authname, ci->authdesc));
-            if(u)
+            if(u) 
             {
                 uint seed[3] = { ::hthash(serverauth) + detrnd(size_t(ci) + size_t(user) + size_t(desc), 0x10000), uint(totalmillis), randomMT() };
                 vector<char> buf;
@@ -3560,6 +3533,7 @@ namespace server
                 {
                     ci->mapcrc = -1;
                     checkmaps();
+                    if(ci->state.state!=CS_DEAD) break;
                 }
                 if(cq->state.deadflush)
                 {
@@ -3922,9 +3896,9 @@ namespace server
                     spinfo->state.respawn();
                     spinfo->state.lasttimeplayed = lastmillis;
                     aiman::addclient(spinfo);
-                    if(spinfo->clientmap[0] || spinfo->mapcrc) checkmaps();
                 }
                 sendf(-1, 1, "ri3", N_SPECTATOR, spectator, val);
+                if(!val && (spinfo->clientmap[0] || spinfo->mapcrc)) checkmaps();
                 if(!val && !hasmap(spinfo)) rotatemap(true);
                 break;
             }
@@ -4091,13 +4065,14 @@ namespace server
                 mi = messageintercept(chan, sender, ci, cq, type, desc, name, victim, text);
                 if(mi > 0) break;
                 else if(mi < 0) return;
-                int authpriv = PRIV_ADMIN;
+                int authpriv = PRIV_AUTH;
                 if(desc[0])
                 {
                     userinfo *u = users.access(userkey(name, desc));
                     if(u) authpriv = u->privilege;
                 }
-                if(trykick(ci, victim, text, name, desc, authpriv, true) && tryauth(ci, name, desc))
+                if(ci->local || ci->privilege >= authpriv) trykick(ci, victim, text);
+                else if(trykick(ci, victim, text, name, desc, authpriv, true) && tryauth(ci, name, desc))
                 {
                     ci->authkickvictim = victim;
                     ci->authkickreason = newstring(text);
@@ -4212,7 +4187,7 @@ namespace server
     int laninfoport() { return SAUERBRATEN_LANINFO_PORT; }
     int serverinfoport(int servport) { return servport < 0 ? SAUERBRATEN_SERVINFO_PORT : servport+1; }
     int serverport(int infoport) { return infoport < 0 ? SAUERBRATEN_SERVER_PORT : infoport-1; }
-    const char *defaultmaster() { return "sauerbraten.org"; }
+    const char *defaultmaster() { return "master.sauerbraten.org"; }
     int masterport() { return SAUERBRATEN_MASTER_PORT; }
     int numchannels() { return 3; }
 
@@ -4250,7 +4225,5 @@ namespace server
 
     #include "aiman.h"
 
-    #define SCMD_FOOT 1
-    #include "zeromod/scommands.h"
-    #undef SCMD_FOOT
+    #include "zeromod/scommandsfuncs.h"
 }

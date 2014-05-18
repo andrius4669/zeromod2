@@ -468,7 +468,8 @@ fpsgame/server.o: fpsgame/game.h shared/cube.h shared/tools.h shared/geom.h
 fpsgame/server.o: shared/ents.h shared/command.h shared/iengine.h
 fpsgame/server.o: shared/igame.h fpsgame/ai.h fpsgame/capture.h fpsgame/ctf.h
 fpsgame/server.o: fpsgame/collect.h fpsgame/extinfo.h fpsgame/aiman.h
-fpsgame/server.o: fpsgame/zeromod/multimasterserver.h fpsgame/zeromod/bans.h fpsgame/zeromod/scommands.h fpsgame/zeromod/mute.h
+# TODO: custom headers deps
+fpsgame/server.o: fpsgame/zeromod/multimasterserver.h
 fpsgame/waypoint.o: fpsgame/game.h shared/cube.h shared/tools.h shared/geom.h
 fpsgame/waypoint.o: shared/ents.h shared/command.h shared/iengine.h
 fpsgame/waypoint.o: shared/igame.h fpsgame/ai.h
@@ -515,7 +516,8 @@ fpsgame/server-standalone.o: shared/iengine.h shared/igame.h fpsgame/ai.h
 fpsgame/server-standalone.o: fpsgame/capture.h fpsgame/ctf.h
 fpsgame/server-standalone.o: fpsgame/collect.h fpsgame/extinfo.h
 fpsgame/server-standalone.o: fpsgame/aiman.h
-fpsgame/server-standalone.o: fpsgame/zeromod/multimasterserver.h fpsgame/zeromod/bans.h fpsgame/zeromod/scommands.h fpsgame/zeromod/mute.h
+# TODO: custom headers deps
+fpsgame/server-standalone.o: fpsgame/zeromod/multimasterserver.h
 
 engine/master-standalone.o: shared/cube.h shared/tools.h shared/geom.h
 engine/master-standalone.o: shared/ents.h shared/command.h shared/iengine.h

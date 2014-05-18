@@ -1,28 +1,8 @@
-/* header for pbans management and some gbans server commands */
+/* server commands for various bans management */
 
 static void formatgban(char *s, int n, bool forcecidr = false)
 {
-    union { uchar b[sizeof(enet_uint32)]; enet_uint32 i; } ip, mask;
-    ip.i = gbans[n].ip;
-    mask.i = gbans[n].mask;
-    bool needcidr = forcecidr;
-    if(!forcecidr) loopi(4) if(mask.b[i]!=0 && mask.b[i]!=0xFF) { needcidr = true; break; }
-    loopi(4)
-    {
-        if(!mask.b[i] && !needcidr) break;
-        if(i) *s++ =  '.';
-        s += sprintf(s, "%d", ip.b[i]);
-    }
-    if(needcidr)
-    {
-        int c = 0;
-        loopi(32) if(mask.b[i>>3] & (1<<(7-(i&7)))) c++;
-        if(c < 32)
-        {
-            *s++ = '/';
-            sprintf(s, "%d", c);
-        }
-    }
+    printban(&gbans[n].ip, &gbans[n].mask, s, forcecidr);
 }
 
 void scmd_listpbans(int argc, char **argv, clientinfo *ci)
@@ -32,8 +12,8 @@ void scmd_listpbans(int argc, char **argv, clientinfo *ci)
     string msg;
     loopv(gbans) if(gbans[i].master < 0)
     {
-        formatstring(msg)("%i ", ++n);
-        formatgban(msg + strlen(msg), i, true);
+        int msgpos = sprintf(msg, "%d ", ++n);
+        formatgban(msg + msgpos, i);
         toclient(ci, msg);
     }
     if(!n) toclient(ci, "none");
@@ -91,7 +71,7 @@ void scmd_unpban(int argc, char **argv, clientinfo *ci)
         gbans.remove(i--);
         found = true;
     }
-    if(!found && m > 0) toclient(ci, "pban doesn't exist");
+    if(!found) toclient(ci, "pban doesn't exist");
 }
 SCOMMAND(unpban, scmd_unpban, PRIV_ADMIN, 0);
 
@@ -108,8 +88,7 @@ void scmd_listgbans(int argc, char **argv, clientinfo *ci)
     }
     loopv(gbansi)
     {
-        toclientf(ci, "masterserver (%s) gbans:", getmasteraddress(i));
-        if(gbansi[i].empty()) toclient(ci, "none");
+        toclientf(ci, "masterserver (%s) gbans:%s", getmasteraddress(i), gbansi[i].empty() ? " none" : "");
         loopvj(gbansi[i])
         {
             formatgban(msg, gbansi[i][j]);
@@ -118,3 +97,41 @@ void scmd_listgbans(int argc, char **argv, clientinfo *ci)
     }
 }
 SCOMMAND(listgbans, scmd_listgbans, PRIV_ADMIN, 0);
+
+SCOMMANDI(listbans, PRIV_MASTER, 0, {
+    if(bannedips.empty()) { toclient(ci, "bans list is empty"); return; }
+    toclient(ci, "bans list:\nip address\texpires after");
+    loopv(bannedips)
+    {
+        string msg; char *p = &msg[0];
+        p = printban(&bannedips[i].ip, NULL, msg, false);
+        *p++ = '\t';
+        
+        toclient(ci, msg);
+    }
+});
+
+void scmd_banip(int argc, char **argv, clientinfo *ci)
+{
+    uint ip = 0;
+    int time = 4*60*60000;
+    if(argc < 2) { scommandbadusage(ci, argv[0]); return; }
+    readban(argv[1], &ip, NULL);
+    if(argc >= 3)
+    {
+        int t = readbantime(argv[2]);
+        if(t > 0) time = t;
+    }
+    toclientf(ci, "adding ban for %s", argv[1]);
+    
+    
+    addban(ip, time);
+    kickclients(ip, ci, ci->privilege);
+}
+SCOMMAND(banip, scmd_banip, PRIV_MASTER, 0);
+
+void scmd_unban(int argc, char **argv, clientinfo *ci)
+{
+    if(argc < 2) { scommandbadusage(ci, argv[0]); return; }
+    
+}

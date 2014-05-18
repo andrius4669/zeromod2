@@ -44,7 +44,7 @@ static int messageintercept(int chan, int sender, clientinfo *ci, clientinfo *cq
 
         case N_COPY:
         case N_CLIPBOARD:
-            break; // allowed even if editmute
+            break;  // allowed even if editmute
 
         case N_EDITMODE:
             // editmode cheat check
@@ -67,7 +67,7 @@ static int messageintercept(int chan, int sender, clientinfo *ci, clientinfo *cq
             if(ci->specmute && sender == spectator && ci->privilege < PRIV_MASTER && !val)
             {
                 ret = 1;
-                toclient(ci, "you are not allowed to unspectate");
+                toclient(ci, "you are not allowed to unspectate yourself");
             }
             break;
         }

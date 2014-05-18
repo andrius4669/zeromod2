@@ -33,8 +33,8 @@ void setlogfile(const char *fname)
     closelogfile();
     if(fname && fname[0])
     {
-        fname = findfile(fname, "w");
-        if(fname) logfile = fopen(fname, "w");
+        fname = findfile(fname, "a");
+        if(fname) logfile = fopen(fname, "a");
     }
     FILE *f = getlogfile();
     if(f) setvbuf(f, NULL, _IOLBF, BUFSIZ);
@@ -367,9 +367,8 @@ int connectwithtimeout(ENetSocket sock, const char *hostname, const ENetAddress 
 
 ENetAddress serveraddress = { ENET_HOST_ANY, ENET_PORT_ANY };
 
-#define INCLUDED_IN_SERVER 1
+#define MULTIMASTERSERV_IMPLEMENTATION 1
 #include "zeromod/multimasterserver.h"
-#undef INCLUDED_IN_SERVER
 
 void disconnectmaster(int m)
 {
@@ -654,7 +653,7 @@ void serverslice(bool dedicated, uint timeout)   // main server update, called f
        
     // below is network only
 
-    if(dedicated)
+    if(dedicated) 
     {
         int millis = (int)enet_time_get();
         elapsedtime = millis - totalmillis;
@@ -738,7 +737,7 @@ void flushserver(bool force)
 void localdisconnect(bool cleanup)
 {
     bool disconnected = false;
-    loopv(clients) if(clients[i]->type==ST_LOCAL)
+    loopv(clients) if(clients[i]->type==ST_LOCAL) 
     {
         server::localdisconnect(i);
         delclient(clients[i]);
@@ -1045,6 +1044,7 @@ void signalhandler(int signum)
         case SIGINT:
             quitserver = true;
             break;
+        case SIGHUP:
         case SIGUSR1:
             reloadcfg = true;
             break;
@@ -1092,12 +1092,13 @@ void rundedicatedserver()
 #else
     signal(SIGTERM, signalhandler);
     signal(SIGINT,  signalhandler);
+    signal(SIGHUP,  signalhandler);
     signal(SIGUSR1, signalhandler);
     signal(SIGUSR2, signalhandler);
     for(;;)
     {
         if(quitserver) { stopdedicatedserver(); exit(EXIT_SUCCESS); }
-        if(restartserver && !nonlocalclients) { stopdedicatedserver(); exit(EXIT_SUCCESS); }   //TODO: execve or something similar
+        if(restartserver && nonlocalclients<=0) { stopdedicatedserver(); exit(EXIT_SUCCESS); }   //TODO: execve or something similar
         if(reloadcfg) { logoutf("reloading server configuration"); execfile("server-init.cfg", false); reloadcfg = false; }
         serverslice(true, 5);
     }
@@ -1132,7 +1133,6 @@ bool setuplistenserver(bool dedicated)
     serverhost = enet_host_create(&address, min(max(maxclients + server::reserveclients(), maxpeers), MAXCLIENTS), server::numchannels(), 0, serveruprate);
     if(!serverhost) return servererror(dedicated, "could not create server host");
     serverhost->duplicatePeers = maxdupclients ? maxdupclients : MAXCLIENTS;
-    loopi(serverhost->peerCount) serverhost->peers[i].data = NULL;
     serverhost->intercept = serverintercept;
     address.port = server::serverinfoport(serverport > 0 ? serverport : -1);
     pongsock = enet_socket_create(ENET_SOCKET_TYPE_DATAGRAM);
@@ -1193,7 +1193,7 @@ void startlistenserver(int *usemaster)
     if(num <= 1)
     {
         if(num <= 0 && allowupdatemaster) { masterservers.add(); num = 1; }
-        if(num >= 1) masterservers[0].allowupdatemaster = allowupdatemaster;
+        if(num == 1) masterservers[0].allowupdatemaster = allowupdatemaster;
     }
     else
     {
